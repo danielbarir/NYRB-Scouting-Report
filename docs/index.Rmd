@@ -1,0 +1,388 @@
+---
+title: "NYRB Scouting Report - Data Science Project"
+author: "Daniel Barir Jensen"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction to New York Red Bulls
+
+*The New York Red Bulls play a high-energy style of soccer, characterized by aggressive pressing, winning 50/50 balls, and direct passes. The team's head coach Gerhard Struber emphasizes bringing through players from the academy, and their formation and tactics have included variations of playing with either 3 or 4 at the back. In this report, I will be diving deeper into the NYRB's offense and highlighting key players and tendencies to look out for. The analysis will be conducted on all match events from the last five games of the 2022 regular season. I will be providing my methodology and code throughout.*
+
+## Outline
+
+* Setting up my environment
+* Filtering the data
+* Formations used in Starting XI
+* Players most frequently used
+* Offensive output by game
+* Offensive output by player
+* Diving deeper into box passes completed
+* Diving deeper into shots and goals
+* Summary & key takeaways
+
+### Setting up my environment
+
+The first step was setting up my R environment by loading the `StatsBombR`, `tidyverse`, `SBpitch`, and `rmarkdown` packages and reading the `match_data` and `lineups` files provided.
+
+```{r loading packages, message = FALSE, warning = FALSE}
+library(StatsBombR)
+library(tidyverse)
+library(SBpitch)
+library(rmarkdown)
+
+match_data = readRDS("match_events_for_test.RDS")
+lineups = readRDS('lineups_for_test.RDS')
+
+```
+
+### Filtering the data
+
+Before beginning the analysis, I created an additional variable to clarify the opponent tied to each event:
+
+```{r opposition team, message = FALSE, warning = FALSE}
+## Creating opposition team variable
+match_data <- get.opposingteam(match_data)
+```
+
+I then created a filtered dataframe to focus only on NYRB's match events:
+
+```{r filtering to nyrb, message = FALSE, warning = FALSE}
+## Filtering data to select just NYRB
+nyrb_data <- match_data %>%
+  filter(team.name == "New York Red Bulls")
+```
+
+### Formations used in Starting XI
+
+In order to see which formations were used in the starting lineup for the last five games, I first filtered the NYRB data to only show the rows containing information regarding the `Starting XI`. I then aggregated the number of times each formation appeared (`count(tactics.formation)`) in the starting lineup:
+
+```{r starting xi formations, message = FALSE, warning = FALSE}
+# Filtering data to view Starting XI for each of the last 5 matches
+starting_xi_data <- nyrb_data %>% 
+  filter(type.name=="Starting XI")
+
+# Aggregating the number of times a formation was used in the starting lineup
+formation_starting_xi <- starting_xi_data %>%
+  select(tactics.formation) %>% 
+  unnest() %>% 
+  count(tactics.formation, name = "times_used_in_starting_xi") %>% 
+  arrange(desc(times_used_in_starting_xi))
+```
+```{r starting xi output, echo = FALSE, warning = FALSE}
+paged_table(formation_starting_xi, options = NULL)
+```
+
+Based on the output, we can see that NYRB have varied between playing with 3 and 4 in the back. In the last five games, NYRB started the game twice in a 3-4-1-2 formation, twice in a 4-2-3-1 formation, and once in a 3-4-2-1. We should thus be prepared to face both a 3-back and 4-back system in our upcoming game. 
+
+### Players most frequently used
+
+I conducted a similar analysis to see which NYRB players appeared in the starting lineup most frequently. I also added the total number of minutes played by each player.
+
+```{r player usage, message = FALSE, warning = FALSE}
+# Number of times a player was in the starting lineup
+players_starting_xi <- starting_xi_data %>%
+  select(tactics.lineup) %>% 
+  unnest() %>% 
+  count(player.name, name = "appearances_in_starting_xi") %>% 
+  arrange(desc(appearances_in_starting_xi))
+
+# Minutes played by each player
+playing_time <- nyrb_data %>% 
+  select(player.name, player.id) %>% 
+  distinct() %>% 
+  na.omit()
+
+minutes_played <- get.minutesplayed(nyrb_data)
+
+minutes_played <- minutes_played %>% 
+  group_by(player.id) %>% 
+  summarise(minutes = sum(MinutesPlayed))
+
+playing_time <- left_join(playing_time, minutes_played)
+
+# Joining playing time and appearances in Starting XI
+playing_time <- left_join(playing_time, players_starting_xi) %>%
+  arrange(desc(minutes))
+
+playing_time <- replace(playing_time, is.na(playing_time), 0)
+
+playing_time <- playing_time %>% 
+  select(player.name, minutes, appearances_in_starting_xi) %>% 
+  mutate_if(is.numeric, round, digits = 2)
+```
+```{r player usage output, echo = FALSE, warning = FALSE}
+paged_table(playing_time, options = NULL)
+```
+
+### Offensive output by game
+
+In order to focus the analysis on NYRB's offense, I grouped several of NYRB's most relevant offensive stats by each of the last five regular season matches:
+
+```{r offensive output by game, message = FALSE, warning = FALSE}
+## Grouping NYRB's offensive stats by each of the last five games
+nyrb_off_summary <- nyrb_data %>%
+  group_by(team.name, OpposingTeam) %>% 
+  summarise(goals = sum(shot.outcome.name=="Goal", na.rm = TRUE),
+            xG = sum(shot.statsbomb_xg, na.rm = TRUE),
+            shots = sum(type.name=="Shot"),
+            shots_on_target = sum(type.name=="Shot" & shot.outcome.name %in% c("Saved", "Goal"), na.rm = TRUE), 
+            passes_attempted = sum(type.name=="Pass"),
+            passes_completed = sum(type.name=="Pass" & is.na(pass.outcome.name)),
+            pass_completion_pct = (passes_completed/passes_attempted*100),
+            box_passes_attempted = sum(type.name=="Pass" & pass.end_location.x>=102 
+                                       & pass.end_location.y<=62 & pass.end_location.y>=18,
+                                       nar.rm = TRUE),
+            box_passes_completed = sum(type.name=="Pass" & is.na(pass.outcome.name) 
+                                       & pass.end_location.x>=102 & pass.end_location.y<=62 
+                                       & pass.end_location.y>=18,
+                                       nar.rm = TRUE),
+            box_pass_completion_pct = (box_passes_completed/box_passes_attempted*100))
+```
+```{r offensive stats output, echo = FALSE, warning = FALSE}
+paged_table(nyrb_off_summary, options = NULL)
+```
+
+### Offensive output by player
+
+In similar fashion I grouped the offensive stats by each individual player and added the corresponding per 90 stats:
+
+```{r offensive output by player, message = FALSE, warning = FALSE}
+# NYRB offensive stats by individual player
+nyrb_off_players <- nyrb_data %>%
+  group_by(player.name, player.id) %>% 
+  summarise(goals = sum(shot.outcome.name=="Goal", na.rm = TRUE),
+            xG = sum(shot.statsbomb_xg, na.rm = TRUE),
+            shots = sum(type.name=="Shot"),
+            shots_on_target = sum(type.name=="Shot" & shot.outcome.name %in% c("Saved", "Goal"), na.rm = TRUE), 
+            passes_attempted = sum(type.name=="Pass"),
+            passes_completed = sum(type.name=="Pass" & is.na(pass.outcome.name)),
+            pass_completion_pct = (passes_completed/passes_attempted*100),
+            box_passes_attempted = sum(type.name=="Pass" & pass.end_location.x>=102 
+                                       & pass.end_location.y<=62 & pass.end_location.y>=18,
+                                       nar.rm = TRUE),
+            box_passes_completed = sum(type.name=="Pass" & is.na(pass.outcome.name) 
+                                       & pass.end_location.x>=102 & pass.end_location.y<=62 
+                                       & pass.end_location.y>=18,
+                                       nar.rm = TRUE),
+            box_pass_completion_pct = (box_passes_completed/box_passes_attempted*100))
+
+# Adding per 90 stats
+nyrb_off_players <- left_join(nyrb_off_players, playing_time)
+
+nyrb_off_players <- nyrb_off_players %>% 
+  filter(minutes >= 90)
+
+nyrb_off_players <- nyrb_off_players %>% 
+  mutate(nineties = minutes/90,
+         goals_p90 = goals/nineties,
+         xG_p90 = xG/nineties,
+         shots_p90 = shots/nineties,
+         shots_on_target_p90 = shots_on_target/nineties,
+         passes_attempted_p90 = passes_attempted/nineties,
+         passes_completed_p90 = passes_completed/nineties, 
+         box_passes_attempted_p90 = box_passes_attempted/nineties,
+         box_passes_completed_p90 = box_passes_completed/nineties)
+
+nyrb_off_players <- nyrb_off_players[,c(1,13,3,16,4,17,5,18,6,19,7,20,8,21,9,10,22,11,23,12)]
+
+nyrb_off_players <- nyrb_off_players %>% 
+  mutate_if(is.numeric, round, digits = 2)
+```
+```{r offensive stats by player output, echo = FALSE, warning = FALSE}
+paged_table(nyrb_off_players, options = NULL)
+```
+
+A total of 20 players have been featured in the last five games of the regular season. 6 players have started in every single game, and 4 players (Sean Nealis, Edelman, Coronel, and Tolkin) have played every single minute. Given this data, we can gain a clearer picture of who we may expect to feature in the upcoming game.
+
+### Diving deeper into box passes completed
+
+In order to gain a better understanding of the NYRB's offensive and identify key threats, I decided to dive deeper into the team's chance creation through completed passes into the box (referred to as box passes).
+
+I first created a visualization to plot all of NYRB's completed box passes (I used the `SBPitch` package to create the pitch visualization and used StatsBomb specifications to define the coordinates of the opposition's box): 
+
+```{r box passes plotted, message = FALSE, warning = FALSE}
+# Plotting box basses completed
+box_passes <- nyrb_data %>%
+  filter(type.name=="Pass" & is.na(pass.outcome.name)) %>%
+  filter(pass.end_location.x>=102 & pass.end_location.y<=62 & pass.end_location.y>=18)
+
+plotted_box_passes <- create_Pitch() +
+  geom_segment(data = box_passes, aes(x = location.x, y = location.y,
+                                                     xend = pass.end_location.x, yend = pass.end_location.y, color = player.name),
+               lineend = "round", linewidth = 0.6, arrow = arrow(length = unit(0.08, "inches"))) + 
+  labs(title = "NYRB, All Box Passes Completed", subtitle = "Last 5 Games") +
+  scale_y_reverse() +
+  coord_fixed(ratio = 105/100) +
+  theme_SB() 
+```
+```{r box passes plotted output, echo = FALSE, warning = FALSE}
+plotted_box_passes
+```
+
+In order to make this visualization more digestible, I decided to first identify NYRB's main passing threats (measured by number of completed box passes). I therefore created a graph to plot the total number of box passes by each NYRB player in descending order: 
+
+```{r box passes completed by player, message = FALSE, warning = FALSE}
+# Graphing total box passes completed by player
+player_box_passes <- ggplot(data = nyrb_off_players, aes(x = reorder(player.name, box_passes_completed), y = box_passes_completed)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  labs(title = "Total Box Passes Completed", y = "Box Passes Completed") +
+  theme(axis.title.y = element_blank()) +
+  scale_y_continuous(expand = c(0,0)) +
+  coord_flip() +
+  theme_SB()
+```
+```{r box passes completed by player output, echo = FALSE, warning = FALSE}
+player_box_passes
+```
+
+As you can see in the graph, Tolkin, Morgan, Duncan, Edelman, and Cásseres Jr had the most completed box passes in the last five games. I created a new plotted visualization for these players only, in order to identify the main threats and gain a clearer picture of what these particular passing patterns looked like:
+
+```{r top box passers plotted, message = FALSE, warning = FALSE}
+# Plotting box passes completed for top 5 passers
+top_box_passers <- box_passes %>%
+  filter(player.name %in% c("John Tolkin", "Lewis Morgan", "Kyle Duncan", "Daniel Edelman", "Cristian Sleiker Cásseres Yepes"))
+
+plotted_top_box_passers <- create_Pitch() +
+  geom_segment(data = top_box_passers, aes(x = location.x, y = location.y,
+                                           xend = pass.end_location.x, yend = pass.end_location.y, color = player.name),
+               lineend = "round", linewidth = 0.6, arrow = arrow(length = unit(0.08, "inches"))) + 
+  labs(title = "Top Passers, Box Passes Completed", subtitle = "Last 5 Games") +
+  scale_y_reverse() +
+  coord_fixed(ratio = 105/100) +
+  theme_SB()
+```
+```{r top box passers plotted output, echo = FALSE, warning = FALSE}
+plotted_top_box_passers
+```
+
+By plotting these particular patterns, I noticed that several of the passes in the visualization seemed to come from corner kicks and other set pieces. In order to assess which players may be key threats from **regular play**, I created a filter for `play_pattern.name` = "Regular Play":
+
+```{r top box passers regular play plotted, message = FALSE, warning = FALSE}
+# Plotting box passes completed for top 5 passers in regular play
+top_box_passers_regularplay <- top_box_passers %>% 
+  filter(play_pattern.name=="Regular Play")
+
+plotted_top_box_passers_regularplay <- create_Pitch() +
+  geom_segment(data = top_box_passers_regularplay, aes(x = location.x, y = location.y,
+                                           xend = pass.end_location.x, yend = pass.end_location.y, color = player.name),
+               lineend = "round", linewidth = 0.6, arrow = arrow(length = unit(0.08, "inches"))) + 
+  labs(title = "Top Passers, Box Passes Completed", subtitle = "Last 5 Games (Regular Play)") +
+  scale_y_reverse() +
+  coord_fixed(ratio = 105/100) +
+  theme_SB()
+```
+```{r top box passers regular play plotted output, echo = FALSE, warning = FALSE}
+plotted_top_box_passers_regularplay
+```
+
+In this final visualization of completed box passes in regular play, it becomes quite clear that John Tolkin and Kyle Duncan primarily provide a passing threat from set pieces. The only player, who stands out is Lewis Morgan with his four completed passes inside the box. Going back to the table I created previously (**Offensive output by player**), we can see that Lewis Morgan also has contributed with a goal and 9 shots in the past five games. Thus we can expect a lot of the chance creation to flow through Lewis Morgan and we should try to limit his touches inside the box. 
+
+### Diving deeper into shots and goals
+
+In order to identify trends in NYRB's finishing patterns, I first plotted every single shot from the last five games and categorized them by the outcome of the shot:  
+
+```{r plotting all shots, message = FALSE, warning = FALSE}
+# Plotting all shots
+nyrb_shots <- nyrb_data %>%
+  filter(type.name=="Shot")
+
+plotted_shots <- create_Pitch() +
+  geom_segment(data = nyrb_shots, aes(x = location.x, y = location.y,
+                                      xend = shot.end_location.x, yend = shot.end_location.y, color = shot.outcome.name),
+               lineend = "round", linewidth = 0.6, arrow = arrow(length = unit(0.08, "inches"))) + 
+  labs(title = "NYRB, All Shots", subtitle = "Last 5 Games") +
+  scale_y_reverse() +
+  coord_fixed(ratio = 105/100) +
+  theme_SB() 
+```
+```{r plotted shots output, echo = FALSE, warning = FALSE}
+plotted_shots
+```
+
+It is difficult to gather much from this visualization other than that there is a general tendency for NYRB to shoot from more central positions. In order to gain more insights into NYRB's chance creation, I created a new visualization that only plots their shots on target (shots classified as `shot.outcome.name` = **"Post"** not included):
+
+```{r plotting all shots on target, message = FALSE, warning = FALSE}
+# Plotting all shots on target
+
+nyrb_shots_on_target <- nyrb_data %>%
+  filter(type.name=="Shot" & shot.outcome.name %in% c("Goal", "Saved"))
+
+plotted_shots_on_target <- create_Pitch() +
+  geom_segment(data = nyrb_shots_on_target, aes(x = location.x, y = location.y,
+                                                xend = shot.end_location.x, yend = shot.end_location.y, color = shot.outcome.name),
+               lineend = "round", linewidth = 0.6, arrow = arrow(length = unit(0.08, "inches"))) + 
+  labs(title = "NYRB, Shots on Target", subtitle = "Last 5 Games") +
+  scale_y_reverse() +
+  coord_fixed(ratio = 105/100) +
+  theme_SB() 
+```
+```{r plotted shots on target output, echo = FALSE, warning = FALSE}
+plotted_shots_on_target
+```
+
+The plotted shots on target show us that NYRB aren't shy of taking shots from outside the box and two of their last five goals came from outside the box.
+
+In order to identify which NYRB players may be considered their primary goalscoring threats, I graphed the shots per 90 for each player in descending order (I chose the per 90 stat here to not disregard players coming off the bench, who may provide an offensive impact):
+
+```{r shots per 90 by player, message = FALSE, warning = FALSE}
+# Graphing shots per 90 by player
+player_shots_p90 <- ggplot(data = nyrb_off_players, aes(x = reorder(player.name, shots_p90), y = shots_p90)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  labs(title = "Shots per 90", y = "Shots") +
+  theme(axis.title.y = element_blank()) +
+  scale_y_continuous(expand = c(0,0)) +
+  coord_flip() +
+  theme_SB()
+```
+```{r shots per 90 by player output, echo = FALSE, warning = FALSE}
+player_shots_p90
+```
+
+The graph reveals that Elias Manoel, Cásseres Jr., Lewis Morgan are the most frequent shooters and that Caden Clark may provide an offensive spark off the bench. It may be effective to mark these players more tightly.
+
+```{r plotting all goals, message = FALSE, warning = FALSE}
+# Plotting all goals
+
+nyrb_goals <- nyrb_data %>%
+  filter(shot.outcome.name=="Goal")
+
+plotted_goals <- create_Pitch() +
+  geom_segment(data = nyrb_goals, aes(x = location.x, y = location.y,
+                                      xend = shot.end_location.x, yend = shot.end_location.y, color = player.name),
+               lineend = "round", linewidth = 0.6, arrow = arrow(length = unit(0.08, "inches"))) + 
+  labs(title = "NYRB, Goals", subtitle = "Last 5 Games") +
+  scale_y_reverse() +
+  coord_fixed(ratio = 105/100) +
+  theme_SB() 
+```
+```{r plotted goals output, echo = FALSE, warning = FALSE}
+plotted_goals
+```
+
+Finally, I plotted each of NYRB's last five goals categorized by each goalscorer in order to gain a visual presentation of what each of their goals looked like.
+
+### Summary & Key Takeaways
+
+In summary, I have analyzed the recent performance of New York Red Bulls in their past five regular season games and have identified the most frequently used formations and players. I have also provided tables as an overview of the team's offensive statistics, as well as individual statistics for featured players. Additionally, I have conducted a deeper analysis of the team's passing threats by looking at passes into the box, as well as their chance and goal creation by examining frequent shooters and shots plotted on the field. 
+
+Key takeaways include:
+
+- NYRB have been using both a 3-back and 4-back system in their games.
+- In the last five games, several players had the most completed box passes, including Tolkin, Morgan, Duncan, Edelman, and Cásseres Jr.
+- When looking at passing patterns, it was noticed that many of the passes came from corner kicks and other set pieces.
+- By filtering for regular play, it was found that John Tolkin and Kyle Duncan primarily provide a passing threat from set pieces, with Lewis Morgan standing out with four completed passes inside the box, as well as contributing with a goal and 9 shots in the past five games.
+- The team tends to shoot from more central positions, and the frequency of goals and shots taken revealed that Elias Manoel, Cásseres Jr., and Lewis Morgan should be marked tightly.
+
+Overall, this report provides valuable insights into the team's offensive strengths and key players and patterns to look out for based on match event data from the last five games.
+
+### Thank you!
+
+
+
